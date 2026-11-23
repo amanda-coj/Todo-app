@@ -1,3 +1,4 @@
+
 (ns todo.frontend.core
   (:require [reagent.core :as r]
             [reagent.dom.client :as rdom]
@@ -5,86 +6,141 @@
             [cljs.core.async :refer [go]]
             [cljs.core.async.interop :refer-macros [<p!]]))
 
-;; --- O "Cérebro" Reativo ---
-(defonce app-state (r/atom {:input-text ""
-                            :todos []
-                            :loading false
-                            :error nil}))
+;; --- 1. O CÉREBRO REATIVO ---
+(defonce app-state
+  (r/atom {:input-text ""
+           :todos []
+           :loading false
+           :error nil}))
 
-;; --- A URL base da nossa API (o backend, porta 3000) ---
+;; --- 2. URL BASE DA API ---
 (def api-url "http://localhost:3000/api")
 
-;; Função auxiliar: faz o fetch e converte a resposta JSON
-;; em dados Clojure (mapas com keywords).
+;; --- 3. FUNÇÃO AUXILIAR: FETCH JSON ---
 (defn fetch-json [url options]
   (-> (js/fetch url (clj->js options))
       (.then (fn [response]
                (when-not (.-ok response)
-                 (throw (js/Error. (str "HTTP error: " (.-status response)))))
+                 (throw (js/Error.
+                         (str "HTTP error: " (.-status response)))))
                (.json response)))
-      ;; Converte o objeto JS em dados Clojure com chaves keyword
       (.then #(js->clj % :keywordize-keys true))))
 
-;; Busca todos os "todos" da API
+;; --- 4. BUSCAR TODAS AS TAREFAS ---
 (defn get-todos []
   (swap! app-state assoc :loading true :error nil)
   (go
     (try
-      (let [response (<p! (fetch-json (str api-url "/todos") {:method "GET"}))]
-        (swap! app-state assoc :todos (:todos response) :loading false))
+      (let [response
+            (<p! (fetch-json (str api-url "/todos")
+                             {:method "GET"}))]
+        (swap! app-state assoc
+               :todos (:todos response)
+               :loading false))
       (catch js/Error e
-        (swap! app-state assoc :error (.-message e) :loading false)))))
+        (swap! app-state assoc
+               :error (.-message e)
+               :loading false)))))
 
-;; --- Cria um "todo" via API (POST) ---
+;; --- 5. CRIAR UMA TAREFA ---
 (defn create-todo [todo-data]
   (swap! app-state assoc :loading true :error nil)
   (go
     (try
-      (<p! (fetch-json (str api-url "/todos")
-                       {:method "POST"
-                        :headers {"Content-Type" "application/json"}
-                        ;; Converte o mapa Clojure em uma string JSON
-                        :body (js/JSON.stringify (clj->js todo-data))}))
-
-      ;; Se o POST funcionou, recarregamos a lista
+      (<p! (fetch-json
+            (str api-url "/todos")
+            {:method "POST"
+             :headers {"Content-Type" "application/json"}
+             :body (js/JSON.stringify (clj->js todo-data))}))
       (get-todos)
       (catch js/Error e
-        (swap! app-state assoc :error (.-message e) :loading false)))))
+        (swap! app-state assoc
+               :error (.-message e)
+               :loading false)))))
 
-;; --- 1. Nossos Componentes (Reativos) ---
+;; --- 6. ALTERNAR STATUS DA TAREFA ---
+(defn toggle-todo [todo-id]
+  (swap! app-state assoc :loading true :error nil)
+  (go
+    (try
+      (<p! (fetch-json
+            (str api-url "/todos/" todo-id "/toggle")
+            {:method "POST"}))
+      (get-todos)
+      (catch js/Error e
+        (swap! app-state assoc
+               :error (.-message e)
+               :loading false)))))
 
-;; O Formulário (conectado à API)
+;; --- 7. EXCLUIR UMA TAREFA ---
+(defn delete-todo [todo-id]
+  (swap! app-state assoc :loading true :error nil)
+  (go
+    (try
+      (<p! (fetch-json
+            (str api-url "/todos/" todo-id)
+            {:method "DELETE"}))
+      (get-todos)
+      (catch js/Error e
+        (swap! app-state assoc
+               :error (.-message e)
+               :loading false)))))
+
+;; --- 8. FORMULÁRIO ---
 (defn todo-form []
   [:div.todo-input
+
    [:input
     {:type "text"
      :placeholder "O que precisa ser feito?"
-     ;; (Leitura): o valor do input vem do app-state
      :value (:input-text @app-state)
-     ;; (Escrita): o on-change atualiza o app-state a cada tecla
-     :on-change #(swap! app-state assoc :input-text (-> % .-target .-value))}]
+     :on-change
+     #(swap! app-state assoc
+             :input-text (-> % .-target .-value))}]
 
    [:button
-    {:on-click (fn []
-                 (let [title (:input-text @app-state)]
-                   (when-not (str/blank? title)
-                     (create-todo {:title title})
-                     (swap! app-state assoc :input-text ""))))}
+    {:on-click
+     (fn []
+       (let [title (:input-text @app-state)]
+         (when-not (str/blank? title)
+           (create-todo {:title title})
+           (swap! app-state assoc :input-text ""))))}
     "Adicionar"]])
 
-;; A Lista (lê diretamente do @app-state)
+;; --- 9. LISTA DE TAREFAS ---
 (defn todo-list []
   [:ul.todo-list
-   ;; (Leitura): o 'for' agora observa o @app-state
    (for [todo (:todos @app-state)]
      ^{:key (:todos/id todo)}
      [:li.todo-item
-      (:todos/title todo)])])
+      {:class (when (= 1 (:todos/completed todo))
+                "completed")}
 
-;; O App Principal
+      ;; Checkbox
+      [:input.todo-checkbox
+       {:type "checkbox"
+        :checked (not= 0 (:todos/completed todo))
+        :on-change
+        #(toggle-todo (:todos/id todo))}]
+
+      ;; Título
+      [:span.todo-title
+       (:todos/title todo)]
+
+      ;; Botão de exclusão
+      [:button.delete-btn
+       {:type "button"
+        :title "Excluir tarefa"
+        :on-click
+        #(delete-todo (:todos/id todo))}
+       "×"]])])
+
+;; --- 10. APLICAÇÃO PRINCIPAL ---
 (defn app []
   [:div.todo-app
+
    [:h1 "Todo App"]
+
    [:p "Conectado à API. Os dados sobrevivem ao F5!"]
 
    (when (:loading @app-state)
@@ -93,15 +149,18 @@
    (when-let [err (:error @app-state)]
      [:p.error (str "Erro: " err)])
 
-   ;; Os componentes agora se viram sozinhos!
    [todo-form]
+
    [todo-list]])
 
-;; --- 2. A Inicialização ---
+;; --- 11. INICIALIZAÇÃO ---
 (defn ^:export init []
   (println "Frontend inicializado...")
-  (let [root (rdom/create-root (js/document.getElementById "app"))]
+
+  (let [root
+        (rdom/create-root
+         (js/document.getElementById "app"))]
+
     (.render root (r/as-element [app])))
 
-  ;; Ao carregar a página, busca os todos da API
   (get-todos))
