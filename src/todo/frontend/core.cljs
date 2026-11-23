@@ -77,9 +77,9 @@
   [:ul.todo-list
    ;; (Leitura): o 'for' agora observa o @app-state
    (for [todo (:todos @app-state)]
-     ^{:key (:id todo)}
+     ^{:key (:todos/id todo)}
      [:li.todo-item
-      (:title todo)])])
+      (:todos/title todo)])])
 
 ;; O App Principal
 (defn app []
